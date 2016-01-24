@@ -1,3 +1,4 @@
+'use strict';
 /**
  * Module dependencies.
  */
@@ -65,70 +66,73 @@ Limiter.prototype.get = function (fn) {
   var max = this.max;
   var db = this.db;
 
-  function create() {
-    var ex = (Date.now() + duration) / 1000 | 0;
+  mget(db, [count, limit, reset, max, duration], fn);
+};
 
-	  db.multi()
-      .set([count, max, 'PX', duration, 'NX'])
-      .set([limit, max, 'PX', duration, 'NX'])
-      .set([reset, ex, 'PX', duration, 'NX'])
-      .exec(function (err, res) {
-        if (err) return fn(err);
+function create(db, opts, cb) {
+  var count = opts[0], limit = opts[1], reset = opts[2], max = opts[3], duration = opts[4];
+  var ex = (Date.now() + duration) / 1000 | 0;
 
-        // If the request has failed, it means the values already
-        // exist in which case we need to get the latest values.
-        if (isFirstReplyNull(res)) return mget();
+  db.multi()
+    .set([count, max, 'PX', duration, 'NX'])
+    .set([limit, max, 'PX', duration, 'NX'])
+    .set([reset, ex, 'PX', duration, 'NX'])
+    .exec(function (err, res) {
+      if (err) return cb(err);
 
-        fn(null, {
-          total: max,
-          remaining: max,
-          reset: ex
-        });
-      });
-  }
+      // If the request has failed, it means the values already
+      // exist in which case we need to get the latest values.
+      if (isFirstReplyNull(res)) return mget(db, opts, cb);
 
-  function decr(res) {
-    var n = ~~res[0];
-    var max = ~~res[1];
-    var ex = ~~res[2];
-    var dateNow = Date.now();
-
-    if (n <= 0) return done();
-
-    function done() {
-      fn(null, {
+      cb(null, {
         total: max,
-        remaining: n < 0 ? 0 : n,
+        remaining: max,
         reset: ex
       });
-    }
+    });
+}
 
-    db.multi()
-      .set([count, n - 1, 'PX', ex * 1000 - dateNow, 'XX'])
-      .pexpire([limit, ex * 1000 - dateNow])
-      .pexpire([reset, ex * 1000 - dateNow])
-      .exec(function (err, res) {
-        if (err) return fn(err);
-        if (isFirstReplyNull(res)) return mget();
-        n = n - 1;
-        done();
-      });
+function decr(db, opts, res, cb) {
+  var count = opts[0], limit = opts[1], reset = opts[2];
+  var n = ~~res[0];
+  var max = ~~res[1];
+  var ex = ~~res[2];
+  var dateNow = Date.now();
+
+  if (n <= 0) return done();
+
+  function done() {
+    cb(null, {
+      total: max,
+      remaining: n < 0 ? 0 : n,
+      reset: ex
+    });
   }
 
-  function mget() {
-	  db.watch([count], function (err) {
-		  if (err) return fn(err);
-		  db.mget([count, limit, reset], function (err, res) {
-			  if (err) return fn(err);
-			  if (!res[0] && res[0] !== 0) return create();
+  db.multi()
+    .set([count, n - 1, 'PX', ex * 1000 - dateNow, 'XX'])
+    .pexpire([limit, ex * 1000 - dateNow])
+    .pexpire([reset, ex * 1000 - dateNow])
+    .exec(function (err, res) {
+      if (err) return cb(err);
+      if (isFirstReplyNull(res)) return mget(db, opts, cb);
+      n = n - 1;
+      done();
+    });
+}
 
-			  decr(res);
-		  });
-	  });
-  }
+function mget(db, opts, cb) {
+  // opts are [count, limit, reset, max, duration]
+  db.watch(opts.slice(0, 1), function (err) {
+    if (err) return cb(err);
+    db.mget(opts.slice(0, 3), function (err, res) {
+      if (err) return cb(err);
+      if (!res[0] && res[0] !== 0) return create(db, opts, cb);
 
-  mget();
-};
+      decr(db, opts, res, cb);
+    });
+  });
+}
 
 /**
  * Check whether the first item of multi replies is null,
