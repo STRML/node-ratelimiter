@@ -16,6 +16,9 @@
     "redis": "0.10.2",
     "should": "*"
   },
+  "scripts": {
+    "test": "mocha test/*.js"
+  },
   "license": "MIT",
   "contributors": [
     "Francois-Guillaume Ribreau <npm@fgribreau.com>"
