@@ -90,6 +90,44 @@ var Limiter = require('..');
       });
     });
 
+    describe('custom step', function() {
+      it('should be configurable', function(done) {
+        var limit = new Limiter({
+          max: 4,
+          id: 'something',
+          db: db
+        });
+        limit.get(2, function(err, res) {
+          res.remaining.should.equal(3);
+          res.total.should.equal(4);
+          limit.get(2, function(err, res) {
+            res.remaining.should.equal(1);
+            res.total.should.equal(4);
+            limit.get(2, function(err, res) {
+              // function caller should reject this call
+              res.remaining.should.equal(0);
+              res.total.should.equal(4);
+              done();
+            });
+          });
+        });
+      });
+
+      it('should be not overflow', function(done) {
+        var limit = new Limiter({
+          max: 2,
+          id: 'something',
+          db: db
+        });
+        limit.get(5, function(err, res) {
+          // function caller should reject this call
+          res.remaining.should.equal(0);
+          res.total.should.equal(2);
+          done();
+        });
+      });
+    });
+
     describe('when the duration is exceeded', function() {
       it('should reset', function(done) {
         this.timeout(5000);

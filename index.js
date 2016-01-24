@@ -57,22 +57,28 @@ Limiter.prototype.inspect = function () {
  * @api public
  */
 
-Limiter.prototype.get = function (fn) {
+Limiter.prototype.get = function (decrBy, fn) {
+  if (typeof decrBy === 'function') {
+    fn = decrBy;
+    decrBy = 1;
+  }
   var count = this.prefix + 'count';
   var reset = this.prefix + 'reset';
   var duration = this.duration;
   var max = this.max;
   var db = this.db;
 
-  mget(db, [count, limit, reset, max, duration], fn);
+  mget(db, [count, reset, max, duration, decrBy], fn);
 };
 
 function create(db, opts, cb) {
-  var count = opts[0], limit = opts[1], reset = opts[2], max = opts[3], duration = opts[4];
+  var count = opts[0], reset = opts[1], max = opts[2], duration = opts[3], decrBy = opts[4];
   var ex = (Date.now() + duration) / 1000 | 0;
+  // If decrBy is greater than 1, we have to subtract the max by it.
+  var adjustedMax = Math.max(max - (decrBy - 1), 0);
 
   db.multi()
-    .set([count, max, 'PX', duration, 'NX'])
+    .set([count, adjustedMax, 'PX', duration, 'NX'])
     .set([reset, ex, 'PX', duration, 'NX'])
     .exec(function (err, res) {
       if (err) return cb(err);
@@ -83,7 +89,7 @@ function create(db, opts, cb) {
 
       cb(null, {
         total: max,
-        remaining: max,
+        remaining: adjustedMax,
         reset: ex
       });
     });
@@ -105,13 +111,14 @@ function decr(db, opts, res, cb) {
     });
   }
 
+  n = n - decrBy;
+
   db.multi()
-    .set([count, n - 1, 'PX', ex * 1000 - dateNow, 'XX'])
+    .set([count, n, 'PX', ex * 1000 - dateNow, 'XX'])
     .pexpire([reset, ex * 1000 - dateNow])
     .exec(function (err, res) {
       if (err) return cb(err);
       if (isFirstReplyNull(res)) return mget(db, opts, cb);
-      n = n - 1;
       done();
     });
 }
