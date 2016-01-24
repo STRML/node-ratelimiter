@@ -51,7 +51,6 @@ Limiter.prototype.inspect = function () {
  * that expire after N seconds:
  *
  *  - limit:<id>:count
- *  - limit:<id>:limit
  *  - limit:<id>:reset
  *
  * @param {Function} fn
@@ -60,7 +59,6 @@ Limiter.prototype.inspect = function () {
 
 Limiter.prototype.get = function (fn) {
   var count = this.prefix + 'count';
-  var limit = this.prefix + 'limit';
   var reset = this.prefix + 'reset';
   var duration = this.duration;
   var max = this.max;
@@ -75,7 +73,6 @@ function create(db, opts, cb) {
 
   db.multi()
     .set([count, max, 'PX', duration, 'NX'])
-    .set([limit, max, 'PX', duration, 'NX'])
     .set([reset, ex, 'PX', duration, 'NX'])
     .exec(function (err, res) {
       if (err) return cb(err);
@@ -93,10 +90,9 @@ function create(db, opts, cb) {
 }
 
 function decr(db, opts, res, cb) {
-  var count = opts[0], limit = opts[1], reset = opts[2];
+  var count = opts[0], reset = opts[1], max = opts[2], duration = opts[3], decrBy = opts[4];
   var n = ~~res[0];
-  var max = ~~res[1];
-  var ex = ~~res[2];
+  var ex = ~~res[1];
   var dateNow = Date.now();
 
   if (n <= 0) return done();
@@ -104,14 +100,13 @@ function decr(db, opts, res, cb) {
   function done() {
     cb(null, {
       total: max,
-      remaining: n < 0 ? 0 : n,
+      remaining: Math.max(n, 0),
       reset: ex
     });
   }
 
   db.multi()
     .set([count, n - 1, 'PX', ex * 1000 - dateNow, 'XX'])
-    .pexpire([limit, ex * 1000 - dateNow])
     .pexpire([reset, ex * 1000 - dateNow])
     .exec(function (err, res) {
       if (err) return cb(err);
@@ -122,10 +117,10 @@ function decr(db, opts, res, cb) {
 }
 
 function mget(db, opts, cb) {
-  // opts are [count, limit, reset, max, duration]
-  db.watch(opts.slice(0, 1), function (err) {
+  var count = opts[0], reset = opts[1];
+  db.watch([count], function (err) {
     if (err) return cb(err);
-    db.mget(opts.slice(0, 3), function (err, res) {
+    db.mget([count, reset], function (err, res) {
       if (err) return cb(err);
       if (!res[0] && res[0] !== 0) return create(db, opts, cb);
 
